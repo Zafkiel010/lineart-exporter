@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文文の图像转线稿器 · Lineart Exporter</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg-1: #0f0f1a;
+    --surface: rgba(255,255,255,0.04);
+    --surface-2: rgba(255,255,255,0.07);
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.15);
+    --text: #e8e8f0;
+    --text-dim: #9090a8;
+    --text-faint: #656580;
+    --accent: #818cf8;
+    --accent-glow: rgba(129,140,248,0.35);
+    --accent-2: #c084fc;
+    --success: #34d399;
+    --error: #f87171;
+    --radius-lg: 16px;
+    --radius-md: 10px;
+  }
+  html { font-size: 14px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg-1);
+    background-image: url('assets/bg_aya.jpg');
+    background-size: cover;
+    background-position: center center;
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+    color: var(--text);
+    min-height: 100vh; position: relative;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background: rgba(12, 12, 22, 0.68);
+    pointer-events: none; z-index: 0;
+  }
+  .app { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 96px 20px 60px; }
+
+  /* 顶部磨砂玻璃题眉（始终固定） */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 28px;
+    background: rgba(18, 18, 30, 0.50);
+    backdrop-filter: blur(20px) saturate(1.5);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+  .topbar .tb-icon {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; box-shadow: 0 3px 14px var(--accent-glow);
+  }
+  .topbar .tb-icon img {
+    width: 100%; height: 100%; object-fit: cover;
+    border-radius: inherit; display: block;
+  }
+  .topbar h1 { font-size: 16px; font-weight: 600; }
+  .topbar .tb-sub { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
+
+  .workbench { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 16px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  }
+
+  /* Drop */
+  .drop {
+    display: block; position: relative;
+    border: 2px dashed var(--border-strong); border-radius: var(--radius-lg);
+    padding: 110px 20px; text-align: center; cursor: pointer;
+    transition: all .25s; background: var(--surface);
+  }
+  .drop:hover { border-color: var(--accent); background: rgba(129,140,248,0.06); }
+  .drop.drag { border-color: var(--accent); background: rgba(129,140,248,0.10); }
+  .drop input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+  .drop-emoji { font-size: 36px; display: block; margin-bottom: 10px; }
+  .drop-text { font-size: 15px; display: block; margin-bottom: 4px; }
+  .drop-hint { font-size: 12px; color: var(--text-faint); display: block; }
+
+  /* 并排预览 */
+  .side-by-side { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .mini-pv {
+    background: rgba(0,0,0,0.25); border: 1px solid var(--border);
+    border-radius: var(--radius-md); overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .mini-pv-head {
+    padding: 8px 12px; font-size: 12px; color: var(--text-faint);
+    border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.2);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .mini-pv-body {
+    flex: 1; min-height: 240px; padding: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mini-pv canvas { max-width: 100%; max-height: 300px; object-fit: contain; }
+  .mini-pv.transparent .mini-pv-body {
+    background-color: #0a0a14;
+    background-image:
+      linear-gradient(45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(255,255,255,0.05) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.05) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.05) 75%);
+    background-size: 14px 14px;
+    background-position: 0 0, 0 7px, 7px -7px, -7px 0px;
+  }
+  /* 白底模式：覆盖棋盘格，仅影响预览，不改变实际透明 PNG */
+  .mini-pv.white-bg .mini-pv-body {
+    background-color: #fff;
+    background-image: none;
+  }
+  .mini-head-btn {
+    font-size: 11px; padding: 2px 8px; margin-right: 10px;
+    border-radius: 4px; border: 1px solid var(--border);
+    background: rgba(255,255,255,0.08); color: var(--text-faint);
+    cursor: pointer;
+  }
+  .mini-head-btn:hover { color: var(--text); background: rgba(255,255,255,0.15); }
+
+  /* 重叠效果框 */
+  .overlay-card { margin-top: 14px; }
+  .overlay-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px; font-size: 13px;
+  }
+  .opacity-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .opacity-row input[type="range"] { width: 110px; }
+  .opacity-row .ov-val {
+    font-family: "SF Mono", Consolas, monospace; font-size: 11px;
+    color: var(--accent); min-width: 36px;
+  }
+  .overlay-body {
+    border-radius: var(--radius-md); overflow: hidden;
+    background-color: #0a0a14;
+    background-image:
+      linear-gradient(45deg, rgba(255,255,255,0.04) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(255,255,255,0.04) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.04) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.04) 75%);
+    background-size: 14px 14px;
+    background-position: 0 0, 0 7px, 7px -7px, -7px 0px;
+    display: flex; justify-content: center; padding: 8px;
+    min-height: 180px;
+  }
+  #overlayCanvas { max-width: 100%; max-height: 420px; object-fit: contain; }
+
+  /* 右侧控件 */
+  .ctrl-group { margin-bottom: 16px; }
+  .ctrl-group:last-child { margin-bottom: 0; }
+  .ctrl-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
+
+  .color-row { display: flex; gap: 6px; align-items: center; }
+  .color-swatch {
+    width: 34px; height: 34px; border-radius: 8px;
+    border: 2px solid var(--border-strong); flex-shrink: 0; cursor: pointer;
+  }
+  .hex-input {
+    flex: 1; min-width: 56px;
+    padding: 8px 8px; border-radius: 8px;
+    background: rgba(0,0,0,0.3); border: 1px solid var(--border-strong);
+    color: var(--text); font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px; text-transform: uppercase; outline: none;
+  }
+  .hex-input:focus { border-color: var(--accent); }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border-strong);
+    color: var(--text); cursor: pointer; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { border-color: var(--accent); }
+  #eyedropperBtn { color: var(--text-dim); }
+  #eyedropperBtn:hover { color: var(--text); }
+  .text-btn {
+    height: 34px; padding: 0 10px; border-radius: 8px; flex-shrink: 0;
+    background: rgba(255,255,255,0.06); border: 1px solid var(--border-strong);
+    color: var(--text-dim); cursor: pointer; font-size: 12px; font-family: inherit;
+    display: flex; align-items: center; justify-content: center; white-space: nowrap;
+  }
+  .text-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  .preset-colors { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+  .preset-colors button {
+    width: 22px; height: 22px; border-radius: 6px;
+    border: 2px solid var(--border-strong); cursor: pointer; padding: 0;
+    transition: transform .15s, border-color .15s;
+  }
+  .preset-colors button:hover { transform: scale(1.15); border-color: var(--accent); }
+
+  .palette { margin-top: 12px; display: none; user-select: none; -webkit-user-select: none; }
+  .palette.show { display: block; }
+  .hsl-sv {
+    position: relative; width: 100%; height: 110px; border-radius: 8px;
+    cursor: crosshair; border: 1px solid var(--border-strong);
+    margin-bottom: 8px; overflow: hidden;
+  }
+  .hsl-sv-cursor {
+    position: absolute; width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  .hsl-hue {
+    width: 100%; height: 12px; border-radius: 6px;
+    background: linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%);
+    border: 1px solid var(--border-strong); position: relative; cursor: pointer;
+  }
+  .hsl-hue-cursor {
+    position: absolute; top: -2px; width: 14px; height: 16px; border-radius: 3px;
+    background: white; border: 1px solid rgba(0,0,0,0.3);
+    transform: translateX(-50%); pointer-events: none;
+  }
+
+  /* 描边粗细滑块 + 笔头预览 */
+  .thick-row { display: flex; align-items: center; gap: 10px; }
+  .thick-row input[type="range"] { flex: 1; }
+  input.thick-val {
+    width: 46px; text-align: center; font-family: "SF Mono", Consolas, monospace;
+    font-size: 11px; color: var(--accent); padding: 3px 4px;
+    background: rgba(129,140,248,0.12); border: 1px solid transparent;
+    border-radius: 6px; outline: none;
+  }
+  input.thick-val:hover, input.thick-val:focus {
+    border-color: var(--accent); background: rgba(129,140,248,0.2);
+  }
+  input.thick-val::-webkit-outer-spin-button,
+  input.thick-val::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input.thick-val { -moz-appearance: textfield; appearance: textfield; }
+  .val-unit { font-size: 11px; color: var(--text-faint); }
+  .brush-preview {
+    width: 40px; height: 40px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .brush-stroke {
+    width: 28px; border-radius: 999px;
+  }
+
+  input[type="range"] {
+    height: 4px; border-radius: 2px; background: var(--border-strong);
+    -webkit-appearance: none; appearance: none; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; box-shadow: 0 2px 8px var(--accent-glow);
+  }
+
+  select.compact-select {
+    width: 100%; padding: 8px 10px; border-radius: 8px;
+    background: rgba(0,0,0,0.3); border: 1px solid var(--border-strong);
+    color: var(--text); font-size: 13px; outline: none; cursor: pointer;
+  }
+  select.compact-select:focus { border-color: var(--accent); }
+
+  .btn {
+    width: 100%; padding: 11px; border-radius: 10px;
+    border: none; font-size: 14px; font-weight: 500; cursor: pointer;
+    font-family: inherit; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: all .2s;
+  }
+  .btn:last-child { margin-bottom: 0; }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white; box-shadow: 0 4px 16px var(--accent-glow); }
+  .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
+  .btn-secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); }
+  .btn-secondary:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+  .btn-download { background: linear-gradient(135deg, #059669, #10b981); color: white; box-shadow: 0 4px 16px rgba(16,185,129,0.3); }
+  .btn-download:hover:not(:disabled) { transform: translateY(-1px); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  .status {
+    display: none; margin-top: 12px; padding: 10px 14px;
+    border-radius: var(--radius-md); font-size: 13px;
+    align-items: center; gap: 10px;
+  }
+  .status.busy { background: rgba(129,140,248,0.12); color: var(--accent); border: 1px solid rgba(129,140,248,0.25); display: flex; }
+  .status.ok { background: rgba(52,211,153,0.10); color: var(--success); border: 1px solid rgba(52,211,153,0.25); display: flex; }
+  .status.err { background: rgba(248,113,113,0.12); color: var(--error); border: 1px solid rgba(248,113,113,0.25); display: flex; }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid currentColor; border-top-color: transparent;
+    animation: spin .7s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 920px) {
+    .workbench { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="tb-icon"><img src="assets/icon_aya.jpg" alt="文"></div>
+    <h1>文文の图像转线稿器</h1>
+    <span class="tb-sub">ayayayayayayayayayayayayayayaya</span>
+  </div>
+
+<div class="app">
+
+  <div class="workbench">
+    <!-- 左 -->
+    <div>
+      <label class="drop" id="drop">
+        <span class="drop-emoji">📷</span>
+        <span class="drop-text">点击选择图片 或 拖拽到这里</span>
+        <span class="drop-hint">PNG / JPG / WEBP · 建议人物立绘或头像</span>
+        <input type="file" id="file" accept="image/*">
+      </label>
+
+      <div id="pvSection" style="display:none;">
+        <!-- 并排 -->
+        <div class="side-by-side">
+          <div class="mini-pv">
+            <div class="mini-pv-head"><span>原图</span><span id="srcSizeTag">-</span></div>
+            <div class="mini-pv-body"><canvas id="srcCanvas"></canvas></div>
+          </div>
+          <div class="mini-pv transparent">
+            <div class="mini-pv-head">
+              <span>线稿（透明底）</span>
+              <span><button type="button" class="mini-head-btn" id="bgToggle" title="仅切换预览底色，下载的 PNG 依然是透明底">白底</button><span id="outSizeTag">-</span></span>
+            </div>
+            <div class="mini-pv-body"><canvas id="outCanvas"></canvas></div>
+          </div>
+        </div>
+
+        <!-- 重叠效果 -->
+        <div class="card overlay-card">
+          <div class="overlay-head">
+            <span>🎯 叠加效果预览（线稿 + 原图）</span>
+            <div class="opacity-row">
+              原图透明度
+              <input type="range" id="overlayOpacity" min="0" max="100" value="50">
+              <span class="ov-val" id="overlayOpacityVal">50%</span>
+            </div>
+          </div>
+          <div class="overlay-body">
+            <canvas id="overlayCanvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右 -->
+    <div class="card">
+      <div class="ctrl-group">
+        <div class="ctrl-label">线条颜色</div>
+        <div class="color-row">
+          <div class="color-swatch" id="colorSwatch" title="点这里展开调色盘"></div>
+          <input type="text" id="colorHex" class="hex-input" value="#FFFFFF" maxlength="7">
+          <button class="icon-btn" id="paletteBtn" title="调色盘">🎨</button>
+          <button class="text-btn" id="eyedropperBtn" title="取屏幕任意位置颜色" type="button">取色器</button>
+        </div>
+        <div class="preset-colors">
+          <button style="background:#ffffff" title="白" data-c="#ffffff"></button>
+          <button style="background:#000000" title="黑" data-c="#000000"></button>
+          <button style="background:#ff4444" title="红" data-c="#ff4444"></button>
+          <button style="background:#ff8822" title="橙" data-c="#ff8822"></button>
+          <button style="background:#ffcc33" title="黄" data-c="#ffcc33"></button>
+          <button style="background:#22cc66" title="绿" data-c="#22cc66"></button>
+          <button style="background:#33aaff" title="蓝" data-c="#33aaff"></button>
+          <button style="background:#5566ff" title="靛蓝" data-c="#5566ff"></button>
+          <button style="background:#9955ff" title="紫" data-c="#9955ff"></button>
+          <button style="background:#ff6699" title="粉" data-c="#ff6699"></button>
+        </div>
+        <div class="palette" id="palette">
+          <div class="hsl-sv" id="hslSv"><div class="hsl-sv-cursor" id="hslSvCursor"></div></div>
+          <div class="hsl-hue" id="hslHue"><div class="hsl-hue-cursor" id="hslHueCursor"></div></div>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">描边粗细</div>
+        <div class="thick-row">
+          <input type="range" id="thickness" min="0" max="6" step="0.1" value="1">
+          <input type="number" class="thick-val" id="thicknessVal" min="0" max="6" step="0.1" value="1.0">
+          <div class="brush-preview"><div class="brush-stroke" id="brushSample"></div></div>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">细节丰富度（越高线条越多越精细）</div>
+        <div class="thick-row">
+          <input type="range" id="detail" min="0" max="100" value="67">
+          <input type="number" class="thick-val" id="detailVal" min="0" max="100" step="1" value="67"><span class="val-unit">%</span>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
+        <div class="ctrl-label">输出图片尺寸</div>
+        <select id="outSize" class="compact-select">
+          <option value="0" selected>和原图一样大</option>
+          <option value="1024">标准 · 1024px（生成快）</option>
+          <option value="2048">高清 · 2048px（推荐）</option>
+          <option value="3072">超清 · 3072px</option>
+          <option value="4096">极清 · 4096px（小图也能出精细线条）</option>
+        </select>
+      </div>
+
+      <div class="ctrl-group" style="margin-bottom:0;">
+        <button class="btn btn-primary" id="goBtn" disabled>✨ 生成线稿</button>
+        <button class="btn btn-secondary" id="recolorBtn" disabled>🔄 重新渲染</button>
+        <button class="btn btn-download" id="dlBtn" disabled>💾 下载 PNG（透明底）</button>
+      </div>
+
+      <div class="status" id="status">
+        <span class="spinner"></span>
+        <span id="statusText"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============ ORT ============
+const ORT_Bases = ['ort/', 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/', 'https://unpkg.com/onnxruntime-web@1.19.2/dist/'];
+let ortPromise = null;
+function loadOrt() {
+  if (window.ort) return Promise.resolve(window.ort);
+  if (ortPromise) return ortPromise;
+  ortPromise = (async () => {
+    let lastErr = null;
+    for (const base of ORT_Bases) {
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = base + 'ort.min.js'; s.async = true;
+          const timer = setTimeout(() => reject(new Error('加载超时')), 15000);
+          s.onload = () => { clearTimeout(timer); resolve(); };
+          s.onerror = () => { clearTimeout(timer); reject(new Error('HTTP 失败')); };
+          document.head.appendChild(s);
+        });
+        await new Promise(r => setTimeout(r, 50));
+        if (window.ort) {
+          window.ort.env.wasm.wasmPaths = new URL(base, location.href).href;
+          window.ort.env.wasm.simd = true;
+          window.ort.env.wasm.numThreads = (self.crossOriginIsolated && (navigator.hardwareConcurrency||1) > 2)
+            ? Math.min(4, navigator.hardwareConcurrency - 1) : 1;
+          return window.ort;
+        }
+        throw new Error('ort 初始化失败');
+      } catch (e) {
+        lastErr = e;
+        document.querySelectorAll('script[src*="ort.min"]').forEach(s => s.remove());
+      }
+    }
+    ortPromise = null;
+    throw new Error('AI 引擎加载失败，请用本地服务器 serve.ps1 打开');
+  })();
+  return ortPromise;
+}
+
+// ============ 模型 ============
+const MODEL_Sources = [
+  n => `https://cdn.jsdelivr.net/gh/Zafkiel010/wt-sight-studio@main/model/${n}.onnx`,
+  n => `https://raw.githubusercontent.com/Zafkiel010/wt-sight-studio/main/model/${n}.onnx`,
+  n => `model/${n}.onnx`
+];
+async function fetchModel(name) {
+  let lastPct = -10;
+  const one = async (url) => {
+    const host = url.split('/')[2] || '本地';
+    setStatus('下载 AI 模型（' + host + '）…', 'busy');
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const total = +resp.headers.get('Content-Length');
+    if (!total) return resp.arrayBuffer();
+    const reader = resp.body.getReader();
+    const chunks = []; let got = 0, stalled = 0;
+    const timer = setInterval(() => {
+      stalled++;
+      if (stalled >= 2) { clearInterval(timer); throw new Error('网络太慢，换源中'); }
+    }, 10000);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stalled = 0; chunks.push(value); got += value.length;
+      const pct = Math.round(got / total * 100);
+      if (pct - lastPct >= 10) { lastPct = pct; setStatus('下载 AI 模型 … ' + pct + '%', 'busy'); }
+    }
+    clearInterval(timer);
+    return new Blob(chunks).arrayBuffer();
+  };
+  let lastErr = null;
+  for (const mk of MODEL_Sources) {
+    try { return await one(mk(name)); } catch (e) { lastErr = e; }
+  }
+  throw new Error('模型下载失败：' + (lastErr?.message||'') + '（国内网络建议用本地服务器 serve.ps1）');
+}
+
+// ============ DOM ============
+const drop=document.getElementById('drop'), fileInput=document.getElementById('file');
+const pvSection=document.getElementById('pvSection');
+const srcCanvas=document.getElementById('srcCanvas'), outCanvas=document.getElementById('outCanvas');
+const srcSizeTag=document.getElementById('srcSizeTag'), outSizeTag=document.getElementById('outSizeTag');
+const overlayCanvas=document.getElementById('overlayCanvas');
+const overlayOpacity=document.getElementById('overlayOpacity'), overlayOpacityVal=document.getElementById('overlayOpacityVal');
+const colorSwatch=document.getElementById('colorSwatch'), colorHex=document.getElementById('colorHex');
+const paletteBtn=document.getElementById('paletteBtn'), eyedropperBtn=document.getElementById('eyedropperBtn');
+const palette=document.getElementById('palette');
+const hslSv=document.getElementById('hslSv'), hslSvCursor=document.getElementById('hslSvCursor');
+const hslHue=document.getElementById('hslHue'), hslHueCursor=document.getElementById('hslHueCursor');
+const thickness=document.getElementById('thickness'), thicknessVal=document.getElementById('thicknessVal'), brushSample=document.getElementById('brushSample');
+const detail=document.getElementById('detail'), detailVal=document.getElementById('detailVal');
+const outSize=document.getElementById('outSize');
+const goBtn=document.getElementById('goBtn'), recolorBtn=document.getElementById('recolorBtn'), dlBtn=document.getElementById('dlBtn');
+const status=document.getElementById('status'), statusText=document.getElementById('statusText');
+
+let img=null, rawSketch=null, sketchHW=null;
+let currentColor='#FFFFFF', currentHSL={h:0,s:0,l:1}, thickR=1;
+
+const spinnerEl=status.querySelector('.spinner');
+function setStatus(msg,type='busy') {
+  status.className='status '+type;
+  statusText.textContent=msg;
+  spinnerEl.style.display=(type==='busy')?'':'none';
+}
+
+// ============ 上传 ============
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag');});
+drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('drag');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+fileInput.addEventListener('change',e=>{if(e.target.files[0])handleFile(e.target.files[0]);});
+function handleFile(f) {
+  const im=new Image();
+  im.onload=()=>{
+    img=im;
+    srcCanvas.width=im.width;srcCanvas.height=im.height;
+    srcCanvas.getContext('2d').drawImage(im,0,0);
+    srcSizeTag.textContent=im.width+'×'+im.height;
+    drop.style.display='none';
+    pvSection.style.display='';
+    goBtn.disabled=false;
+    recolorBtn.disabled=true;dlBtn.disabled=true;
+    status.className='status';
+  };
+  im.src=URL.createObjectURL(f);
+}
+
+// ============ 颜色 ============
+function hexToHSL(hex) {
+  const r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
+  const max=Math.max(r,g,b),min=Math.min(r,g,b);let h=0,s=0;const l=(max+min)/2;
+  if(max!==min){const d=max-min;s=l>0.5?d/(2-max-min):d/(max+min);
+    if(max===r)h=(g-b)/d+(g<b?6:0);else if(max===g)h=(b-r)/d+2;else h=(r-g)/d+4;h/=6;}
+  return{h,s,l};
+}
+function hslToHex(h,s,l) {
+  let r,g,b;
+  if(s===0)r=g=b=l;
+  else{const h2=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};
+    const q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;r=h2(p,q,h+1/3);g=h2(p,q,h);b=h2(p,q,h-1/3);}
+  const x=v=>Math.round(v*255).toString(16).padStart(2,'0');
+  return'#'+x(r)+x(g)+x(b);
+}
+function updateColorUI() {
+  colorSwatch.style.background=currentColor;
+  colorHex.value=currentColor.toUpperCase();
+  hslSv.style.background=`linear-gradient(to right, white, hsl(${currentHSL.h*360},100%,50%)), linear-gradient(to top, black, transparent)`;
+  hslSvCursor.style.left=(currentHSL.s*100)+'%';
+  hslSvCursor.style.top=((1-currentHSL.l)*100)+'%';
+  hslHueCursor.style.left=(currentHSL.h*100)+'%';
+}
+function setColor(hex) {
+  currentColor=hex;currentHSL=hexToHSL(hex);
+  updateColorUI();
+  if(rawSketch)renderLineart();
+}
+// 直接按 HSL 更新：不经 hex 往返转换，避免 h≈1(360°红) 被 hexToHSL 归零导致游标弹回左端
+function applyHSL(patch) {
+  currentHSL=Object.assign({},currentHSL,patch);
+  currentColor=hslToHex(currentHSL.h,currentHSL.s,currentHSL.l);
+  updateColorUI();
+  if(rawSketch)renderLineart();
+}
+colorSwatch.addEventListener('click',()=>palette.classList.toggle('show'));
+paletteBtn.addEventListener('click',()=>palette.classList.toggle('show'));
+colorHex.addEventListener('change',()=>{
+  let v=colorHex.value.trim();if(!v.startsWith('#'))v='#'+v;
+  if(/^#[0-9a-fA-F]{6}$/.test(v))setColor(v);else colorHex.value=currentColor.toUpperCase();
+});
+document.querySelectorAll('.preset-colors button').forEach(b=>b.addEventListener('click',()=>setColor(b.dataset.c)));
+
+function svAt(e){const r=hslSv.getBoundingClientRect();
+  const s=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+  const l=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height));
+  applyHSL({s,l});}
+function hueAt(e){const r=hslHue.getBoundingClientRect();
+  const h=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+  applyHSL({h});}
+hslSv.addEventListener('mousedown',e=>{e.preventDefault();svAt(e);window._svD=true;});
+hslHue.addEventListener('mousedown',e=>{e.preventDefault();hueAt(e);window._hD=true;});
+window.addEventListener('mousemove',e=>{if(window._svD)svAt(e);if(window._hD)hueAt(e);});
+window.addEventListener('mouseup',()=>{window._svD=window._hD=false;});
+
+// ============ 全屏取色（EyeDropper API，点吸管按钮直接取屏幕任意位置） ============
+eyedropperBtn.addEventListener('click',async()=>{
+  if(!('EyeDropper' in window)){setStatus('当前浏览器不支持全屏取色，请使用 Chrome 或 Edge','err');return;}
+  try{
+    const res=await new EyeDropper().open();
+    let hex=res.sRGBHex||'#FFFFFF';if(!hex.startsWith('#'))hex='#'+hex;
+    setColor(hex);setStatus('取色成功：'+hex.toUpperCase(),'ok');
+  }catch(e){
+    if(e&&e.name==='AbortError')return; // ESC 取消，不打扰
+    setStatus('取色失败：'+((e&&e.name)||e),'err');
+  }
+});
+
+// ============ 粗细无极 + 笔头预览 ============
+// 线稿在预览框里被缩小显示，示意笔画必须按同一缩放比换算，才能和看到的线条等宽
+function getPreviewScale() {
+  if (!outCanvas.width || !outCanvas.height) return 1;
+  const r = outCanvas.getBoundingClientRect();
+  if (!r.width || !r.height) return 1;
+  return Math.min(r.width / outCanvas.width, r.height / outCanvas.height);
+}
+// 从成品 alpha 实测典型线宽（输出图像素）：
+// 在若干采样行/列上量墨迹段长度，取中位数 —— AI 基础线宽不是 1px，只能实测不能猜公式
+function measureStrokePx(alpha, W, H) {
+  const runs = [], N = 200, THR = 128;
+  for (let i = 0; i < N; i++) {
+    // 水平扫描 → 量竖向笔画粗细
+    const y = Math.min(H - 1, Math.floor((i + 0.5) / N * H));
+    let s = -1, row = y * W;
+    for (let x = 0; x <= W; x++) {
+      const ink = x < W && alpha[row + x] >= THR;
+      if (ink && s < 0) s = x;
+      else if (!ink && s >= 0) {
+        const len = x - s;
+        if (len >= 2 && len < W * 0.25) runs.push(len);
+        s = -1;
+      }
+    }
+    // 垂直扫描 → 量横向笔画粗细
+    const x = Math.min(W - 1, Math.floor((i + 0.5) / N * W));
+    s = -1;
+    for (let y2 = 0; y2 <= H; y2++) {
+      const ink = y2 < H && alpha[y2 * W + x] >= THR;
+      if (ink && s < 0) s = y2;
+      else if (!ink && s >= 0) {
+        const len = y2 - s;
+        if (len >= 2 && len < H * 0.25) runs.push(len);
+        s = -1;
+      }
+    }
+  }
+  if (!runs.length) return 0;
+  runs.sort((a, b) => a - b);
+  return runs[(runs.length / 2) | 0];
+}
+let measuredStrokePx = 0;
+function updateBrushPreview() {
+  // 生成前没有实测数据，按典型基础线宽 3px + 膨胀量做占位
+  const outPx = measuredStrokePx || (3 + 2 * thickR);
+  const d = Math.max(1, outPx * getPreviewScale());
+  brushSample.style.height = d.toFixed(2) + 'px';
+  brushSample.style.background = currentColor;
+  brushSample.title = '当前线宽约 ' + outPx.toFixed(1) + ' px（输出图实际像素）';
+}
+window.addEventListener('resize', updateBrushPreview);
+function applyThickness(v, fromNum) {
+  v=Math.round(v*10)/10;
+  if(!isFinite(v))return;
+  v=Math.max(0,Math.min(6,v));
+  thickR=v;
+  thickness.value=v;
+  if(!fromNum)thicknessVal.value=v.toFixed(1); // 来自手动输入时不回写，避免打断输入
+  updateBrushPreview();
+  if(rawSketch)renderLineart();
+}
+thickness.addEventListener('input',()=>applyThickness(parseFloat(thickness.value)));
+thicknessVal.addEventListener('input',()=>applyThickness(parseFloat(thicknessVal.value),true));
+thicknessVal.addEventListener('blur',()=>{thicknessVal.value=thickR.toFixed(1);});
+function applyDetail(v, fromNum) {
+  if(!isFinite(v))return;
+  v=Math.max(0,Math.min(100,Math.round(v)));
+  detail.value=v;
+  if(!fromNum)detailVal.value=v;
+  if(rawSketch)renderLineart();
+}
+detail.addEventListener('input',()=>applyDetail(parseInt(detail.value)));
+detailVal.addEventListener('input',()=>applyDetail(parseInt(detailVal.value),true));
+detailVal.addEventListener('blur',()=>{detailVal.value=detail.value;});
+// 鼠标悬停滑动槽时滚轮调值：上滚 +step，下滚 -step（粗细0.1/细节1）
+function bindWheelStep(slider, read, apply) {
+  slider.addEventListener('wheel',(e)=>{
+    e.preventDefault();
+    const step=parseFloat(slider.step)||1;
+    apply(read()+(e.deltaY<0?step:-step));
+  },{passive:false});
+}
+bindWheelStep(thickness,()=>thickR,v=>applyThickness(v));
+bindWheelStep(detail,()=>parseInt(detail.value),v=>applyDetail(v));
+bindWheelStep(overlayOpacity,()=>parseInt(overlayOpacity.value),v=>{
+  v=Math.max(0,Math.min(100,Math.round(v)));
+  overlayOpacity.value=v;
+  overlayOpacityVal.textContent=v+'%';
+  renderOverlay();
+});
+overlayOpacity.addEventListener('input',()=>{
+  overlayOpacityVal.textContent=overlayOpacity.value+'%';
+  renderOverlay();
+});
+
+// ============ 按钮 ============
+const bgToggle=document.getElementById('bgToggle');
+bgToggle.addEventListener('click',()=>{
+  const card=bgToggle.closest('.mini-pv');
+  const white=card.classList.toggle('white-bg');
+  bgToggle.textContent=white?'透明底':'白底';
+});
+goBtn.addEventListener('click',generate);
+recolorBtn.addEventListener('click',()=>{if(rawSketch)renderLineart();});
+dlBtn.addEventListener('click',()=>{
+  outCanvas.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='lineart_'+Date.now()+'.png';a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+  },'image/png');
+});
+
+async function generate() {
+  if(!img)return;
+  goBtn.disabled=true;
+  try{
+    let W=img.width,H=img.height;
+    const maxSide=parseInt(outSize.value)||Math.max(W,H);
+    const k=maxSide/Math.max(W,H);
+    W=Math.max(8,Math.round(W*k/8)*8);H=Math.max(8,Math.round(H*k/8)*8);
+
+    setStatus('预处理图片 '+W+'×'+H+' …','busy');
+    const c=document.createElement('canvas');c.width=W;c.height=H;
+    const g=c.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(img,0,0,W,H);
+    const id=g.getImageData(0,0,W,H),d=id.data,px=W*H;
+    const rgb=new Float32Array(3*px);
+    for(let i=0,p=0;p<px;p++,i+=4){rgb[p]=d[i]/255;rgb[p+px]=d[i+1]/255;rgb[p+2*px]=d[i+2]/255;}
+
+    const ort=await loadOrt();
+    const bytes=await fetchModel('line-drawings');
+    const sess=await ort.InferenceSession.create(bytes,{executionProviders:['wasm'],graphOptimizationLevel:'all'});
+
+    setStatus('AI 正在描线（'+W+'×'+H+'）…','busy');
+    await new Promise(r=>setTimeout(r,30));
+    const feeds={};feeds[sess.inputNames[0]]=new ort.Tensor('float32',rgb,[1,3,H,W]);
+    const out=await sess.run(feeds);
+    const tn=sess.outputNames[0],arr=out[tn].data,dims=out[tn].dims;
+    rawSketch=new Float32Array(arr.length);
+    for(let i=0;i<arr.length;i++)rawSketch[i]=Math.max(0,Math.min(1,arr[i]));
+    sketchHW={H:dims[2],W:dims[3]};
+
+    renderLineart();
+    setStatus('完成！可以下载或继续调整颜色、粗细','ok');
+    recolorBtn.disabled=false;dlBtn.disabled=false;
+  }catch(e){
+    console.error(e);
+    setStatus((e&&e.message)||String(e)||'未知错误','err');
+  }finally{goBtn.disabled=false;}
+}
+
+// ============ 膨胀（整数半径，滑动窗口最大值） ============
+function dilate(src,W,H,r) {
+  if(r<=0)return src;
+  const tmp=new Uint8ClampedArray(src.length);
+  for(let y=0;y<H;y++){
+    const base=y*W,dq=[];
+    for(let x=0;x<W;x++){
+      const ax=x+r;
+      if(ax<W){const v=src[base+ax];while(dq.length&&src[base+dq[dq.length-1]]<=v)dq.pop();dq.push(ax);}
+      while(dq[0]<x-r)dq.shift();
+      tmp[base+x]=src[base+dq[0]];
+    }
+  }
+  const out=new Uint8ClampedArray(src.length);
+  for(let x=0;x<W;x++){
+    const dq=[];
+    for(let y=0;y<H;y++){
+      const ay=y+r;
+      if(ay<H){const v=tmp[ay*W+x];while(dq.length&&tmp[dq[dq.length-1]*W+x]<=v)dq.pop();dq.push(ay);}
+      while(dq[0]<y-r)dq.shift();
+      out[y*W+x]=tmp[dq[0]*W+x];
+    }
+  }
+  return out;
+}
+// 小数半径：相邻两档线性混合 → 无极变倍
+function dilateSmooth(src,W,H,r) {
+  const r0=Math.floor(r),f=r-r0;
+  const d0=dilate(src,W,H,r0);
+  if(f<0.01)return d0;
+  const d1=dilate(src,W,H,r0+1);
+  const out=new Uint8ClampedArray(src.length);
+  for(let i=0;i<src.length;i++)out[i]=d0[i]*(1-f)+d1[i]*f;
+  return out;
+}
+
+// ============ 渲染线稿 ============
+function renderLineart() {
+  if(!rawSketch||!sketchHW)return;
+  const{H,W}=sketchHW;
+  const hex=currentColor.replace('#','');
+  const R=parseInt(hex.slice(0,2),16),G=parseInt(hex.slice(2,4),16),B=parseInt(hex.slice(4,6),16);
+  const t=(100-parseInt(detail.value))/100*0.3;
+
+  const base=new Uint8ClampedArray(rawSketch.length);
+  for(let i=0;i<rawSketch.length;i++){
+    const v=Math.max(0,(1-rawSketch[i])-t)/(1-t);
+    base[i]=Math.max(0,Math.min(255,Math.round(v*255)));
+  }
+  const alpha=dilateSmooth(base,W,H,thickR);
+  measuredStrokePx = measureStrokePx(alpha, W, H);
+
+  outCanvas.width=W;outCanvas.height=H;
+  const g=outCanvas.getContext('2d');
+  const od=g.createImageData(W,H),dd=od.data;
+  for(let p=0,i=0;p<alpha.length;p++,i+=4){
+    dd[i]=R;dd[i+1]=G;dd[i+2]=B;dd[i+3]=alpha[p];
+  }
+  g.putImageData(od,0,0);
+  outSizeTag.textContent=W+'×'+H;
+  updateBrushPreview();
+  renderOverlay();
+}
+
+// ============ 叠加效果：原图(可调透明度) + 线稿 ============
+function renderOverlay() {
+  if(!rawSketch||!sketchHW||!img)return;
+  const{W,H}=sketchHW;
+  overlayCanvas.width=W;overlayCanvas.height=H;
+  const g=overlayCanvas.getContext('2d');
+  g.clearRect(0,0,W,H);
+  g.imageSmoothingQuality='high';
+  g.globalAlpha=parseInt(overlayOpacity.value)/100;
+  g.drawImage(img,0,0,W,H);
+  g.globalAlpha=1;
+  g.drawImage(outCanvas,0,0);
+}
+
+updateColorUI();
+updateBrushPreview();
+</script>
+
+</body>
+</html>
