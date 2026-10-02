@@ -158,6 +158,26 @@
   .ctrl-group:last-child { margin-bottom: 0; }
   .ctrl-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; }
 
+  /* 输出模式分段 */
+  .mode-switch {
+    display: flex; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border-strong); background: rgba(0,0,0,0.25);
+  }
+  .mode-btn {
+    flex: 1; padding: 9px 0; font-size: 12px; font-family: inherit;
+    background: transparent; color: var(--text-dim); border: none;
+    cursor: pointer; transition: all .15s;
+  }
+  .mode-btn.active {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-weight: 500;
+  }
+  .mode-btn:not(.active):hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  /* 填色提示 */
+  .fill-hint { margin-top: 10px; font-size: 11px; color: var(--text-faint); line-height: 1.7; }
+  .fill-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .fill-actions .mini-head-btn { margin: 0; padding: 4px 10px; }
+
   .color-row { display: flex; gap: 6px; align-items: center; }
   .color-swatch {
     width: 34px; height: 34px; border-radius: 8px;
@@ -323,9 +343,9 @@
             <div class="mini-pv-head"><span>原图</span><span id="srcSizeTag">-</span></div>
             <div class="mini-pv-body"><canvas id="srcCanvas"></canvas></div>
           </div>
-          <div class="mini-pv transparent">
+          <div class="mini-pv transparent" id="resultCard">
             <div class="mini-pv-head">
-              <span>线稿（透明底）</span>
+              <span id="resultTitle">线稿（透明底）</span>
               <span><button type="button" class="mini-head-btn" id="bgToggle" title="仅切换预览底色，下载的 PNG 依然是透明底">白底</button><span id="outSizeTag">-</span></span>
             </div>
             <div class="mini-pv-body"><canvas id="outCanvas"></canvas></div>
@@ -352,28 +372,26 @@
     <!-- 右 -->
     <div class="card">
       <div class="ctrl-group">
+        <div class="ctrl-label">输出模式</div>
+        <div class="mode-switch" id="modeSwitch">
+          <button class="mode-btn active" data-mode="line" type="button">线稿模式</button>
+          <button class="mode-btn" data-mode="fill" type="button">主体填色</button>
+        </div>
+      </div>
+
+      <div class="ctrl-group">
         <div class="ctrl-label">线条颜色</div>
-        <div class="color-row">
-          <div class="color-swatch" id="colorSwatch" title="点这里展开调色盘"></div>
-          <input type="text" id="colorHex" class="hex-input" value="#FFFFFF" maxlength="7">
-          <button class="icon-btn" id="paletteBtn" title="调色盘">🎨</button>
-          <button class="text-btn" id="eyedropperBtn" title="取屏幕任意位置颜色" type="button">取色器</button>
-        </div>
-        <div class="preset-colors">
-          <button style="background:#ffffff" title="白" data-c="#ffffff"></button>
-          <button style="background:#000000" title="黑" data-c="#000000"></button>
-          <button style="background:#ff4444" title="红" data-c="#ff4444"></button>
-          <button style="background:#ff8822" title="橙" data-c="#ff8822"></button>
-          <button style="background:#ffcc33" title="黄" data-c="#ffcc33"></button>
-          <button style="background:#22cc66" title="绿" data-c="#22cc66"></button>
-          <button style="background:#33aaff" title="蓝" data-c="#33aaff"></button>
-          <button style="background:#5566ff" title="靛蓝" data-c="#5566ff"></button>
-          <button style="background:#9955ff" title="紫" data-c="#9955ff"></button>
-          <button style="background:#ff6699" title="粉" data-c="#ff6699"></button>
-        </div>
-        <div class="palette" id="palette">
-          <div class="hsl-sv" id="hslSv"><div class="hsl-sv-cursor" id="hslSvCursor"></div></div>
-          <div class="hsl-hue" id="hslHue"><div class="hsl-hue-cursor" id="hslHueCursor"></div></div>
+        <div id="lineColorCtl"></div>
+      </div>
+
+      <div class="ctrl-group" id="fillColorGroup" style="display:none;">
+        <div class="ctrl-label">填充颜色</div>
+        <div id="fillColorCtl"></div>
+        <div class="fill-hint">
+          AI 自动识别人物轮廓（动漫/插画风优化）并把整个人物填满，背景透明。识别不准时可尝试重新 AI 识别。
+          <div class="fill-actions">
+            <button type="button" class="mini-head-btn" id="resetRegionsBtn">重新 AI 识别</button>
+          </div>
         </div>
       </div>
 
@@ -421,7 +439,7 @@
 
 <script>
 // ============ ORT ============
-const ORT_Bases = ['ort/', 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/', 'https://unpkg.com/onnxruntime-web@1.19.2/dist/'];
+const ORT_Bases = ['ort/', 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.0/dist/', 'https://unpkg.com/onnxruntime-web@1.23.0/dist/'];
 let ortPromise = null;
 function loadOrt() {
   if (window.ort) return Promise.resolve(window.ort);
@@ -503,11 +521,8 @@ const srcCanvas=document.getElementById('srcCanvas'), outCanvas=document.getElem
 const srcSizeTag=document.getElementById('srcSizeTag'), outSizeTag=document.getElementById('outSizeTag');
 const overlayCanvas=document.getElementById('overlayCanvas');
 const overlayOpacity=document.getElementById('overlayOpacity'), overlayOpacityVal=document.getElementById('overlayOpacityVal');
-const colorSwatch=document.getElementById('colorSwatch'), colorHex=document.getElementById('colorHex');
-const paletteBtn=document.getElementById('paletteBtn'), eyedropperBtn=document.getElementById('eyedropperBtn');
-const palette=document.getElementById('palette');
-const hslSv=document.getElementById('hslSv'), hslSvCursor=document.getElementById('hslSvCursor');
-const hslHue=document.getElementById('hslHue'), hslHueCursor=document.getElementById('hslHueCursor');
+const modeSwitch=document.getElementById('modeSwitch'), fillColorGroup=document.getElementById('fillColorGroup');
+const resultTitle=document.getElementById('resultTitle'), resetRegionsBtn=document.getElementById('resetRegionsBtn');
 const thickness=document.getElementById('thickness'), thicknessVal=document.getElementById('thicknessVal'), brushSample=document.getElementById('brushSample');
 const detail=document.getElementById('detail'), detailVal=document.getElementById('detailVal');
 const outSize=document.getElementById('outSize');
@@ -515,7 +530,7 @@ const goBtn=document.getElementById('goBtn'), recolorBtn=document.getElementById
 const status=document.getElementById('status'), statusText=document.getElementById('statusText');
 
 let img=null, rawSketch=null, sketchHW=null;
-let currentColor='#FFFFFF', currentHSL={h:0,s:0,l:1}, thickR=1;
+let mode='line', thickR=1;
 
 const spinnerEl=status.querySelector('.spinner');
 function setStatus(msg,type='busy') {
@@ -545,7 +560,7 @@ function handleFile(f) {
   im.src=URL.createObjectURL(f);
 }
 
-// ============ 颜色 ============
+// ============ 颜色工具函数 ============
 function hexToHSL(hex) {
   const r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
   const max=Math.max(r,g,b),min=Math.min(r,g,b);let h=0,s=0;const l=(max+min)/2;
@@ -561,57 +576,102 @@ function hslToHex(h,s,l) {
   const x=v=>Math.round(v*255).toString(16).padStart(2,'0');
   return'#'+x(r)+x(g)+x(b);
 }
-function updateColorUI() {
-  colorSwatch.style.background=currentColor;
-  colorHex.value=currentColor.toUpperCase();
-  hslSv.style.background=`linear-gradient(to right, white, hsl(${currentHSL.h*360},100%,50%)), linear-gradient(to top, black, transparent)`;
-  hslSvCursor.style.left=(currentHSL.s*100)+'%';
-  hslSvCursor.style.top=((1-currentHSL.l)*100)+'%';
-  hslHueCursor.style.left=(currentHSL.h*100)+'%';
-}
-function setColor(hex) {
-  currentColor=hex;currentHSL=hexToHSL(hex);
-  updateColorUI();
-  if(rawSketch)renderLineart();
-}
-// 直接按 HSL 更新：不经 hex 往返转换，避免 h≈1(360°红) 被 hexToHSL 归零导致游标弹回左端
-function applyHSL(patch) {
-  currentHSL=Object.assign({},currentHSL,patch);
-  currentColor=hslToHex(currentHSL.h,currentHSL.s,currentHSL.l);
-  updateColorUI();
-  if(rawSketch)renderLineart();
-}
-colorSwatch.addEventListener('click',()=>palette.classList.toggle('show'));
-paletteBtn.addEventListener('click',()=>palette.classList.toggle('show'));
-colorHex.addEventListener('change',()=>{
-  let v=colorHex.value.trim();if(!v.startsWith('#'))v='#'+v;
-  if(/^#[0-9a-fA-F]{6}$/.test(v))setColor(v);else colorHex.value=currentColor.toUpperCase();
-});
-document.querySelectorAll('.preset-colors button').forEach(b=>b.addEventListener('click',()=>setColor(b.dataset.c)));
 
-function svAt(e){const r=hslSv.getBoundingClientRect();
-  const s=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
-  const l=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height));
-  applyHSL({s,l});}
-function hueAt(e){const r=hslHue.getBoundingClientRect();
-  const h=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
-  applyHSL({h});}
-hslSv.addEventListener('mousedown',e=>{e.preventDefault();svAt(e);window._svD=true;});
-hslHue.addEventListener('mousedown',e=>{e.preventDefault();hueAt(e);window._hD=true;});
-window.addEventListener('mousemove',e=>{if(window._svD)svAt(e);if(window._hD)hueAt(e);});
-window.addEventListener('mouseup',()=>{window._svD=window._hD=false;});
+// ============ 颜色控件（色块 HEX 调色盘 取色器 预设色，线条/填充各一套） ============
+const PRESET_COLORS=[['#ffffff','白'],['#000000','黑'],['#ff4444','红'],['#ff8822','橙'],['#ffcc33','黄'],['#22cc66','绿'],['#33aaff','蓝'],['#5566ff','靛蓝'],['#9955ff','紫'],['#ff6699','粉']];
+function createColorControl(rootId, initialHex, onChange) {
+  const root=document.getElementById(rootId);
+  root.innerHTML=
+    '<div class="color-row">'+
+      '<div class="color-swatch" title="点这里展开调色盘"></div>'+
+      '<input type="text" class="hex-input" maxlength="7">'+
+      '<button class="icon-btn palette-btn" title="调色盘" type="button">🎨</button>'+
+      '<button class="text-btn eyedropper-btn" title="取屏幕任意位置颜色" type="button">取色器</button>'+
+    '</div>'+
+    '<div class="preset-colors">'+PRESET_COLORS.map(([c,n])=>'<button style="background:'+c+'" title="'+n+'" data-c="'+c+'"></button>').join('')+'</div>'+
+    '<div class="palette">'+
+      '<div class="hsl-sv"><div class="hsl-sv-cursor"></div></div>'+
+      '<div class="hsl-hue"><div class="hsl-hue-cursor"></div></div>'+
+    '</div>';
+  const swatch=root.querySelector('.color-swatch'), hexEl=root.querySelector('.hex-input');
+  const palBtn=root.querySelector('.palette-btn'), eyeBtn=root.querySelector('.eyedropper-btn');
+  const palette=root.querySelector('.palette');
+  const svEl=root.querySelector('.hsl-sv'), svCursor=root.querySelector('.hsl-sv-cursor');
+  const hueEl=root.querySelector('.hsl-hue'), hueCursor=root.querySelector('.hsl-hue-cursor');
+  let color=initialHex, hsl=hexToHSL(initialHex), dragging=null;
 
-// ============ 全屏取色（EyeDropper API，点吸管按钮直接取屏幕任意位置） ============
-eyedropperBtn.addEventListener('click',async()=>{
-  if(!('EyeDropper' in window)){setStatus('当前浏览器不支持全屏取色，请使用 Chrome 或 Edge','err');return;}
-  try{
-    const res=await new EyeDropper().open();
-    let hex=res.sRGBHex||'#FFFFFF';if(!hex.startsWith('#'))hex='#'+hex;
-    setColor(hex);setStatus('取色成功：'+hex.toUpperCase(),'ok');
-  }catch(e){
-    if(e&&e.name==='AbortError')return; // ESC 取消，不打扰
-    setStatus('取色失败：'+((e&&e.name)||e),'err');
+  function updateUI() {
+    swatch.style.background=color;
+    hexEl.value=color.toUpperCase();
+    svEl.style.background=`linear-gradient(to right, white, hsl(${hsl.h*360},100%,50%)), linear-gradient(to top, black, transparent)`;
+    svCursor.style.left=(hsl.s*100)+'%';
+    svCursor.style.top=((1-hsl.l)*100)+'%';
+    hueCursor.style.left=(hsl.h*100)+'%';
   }
+  // silent=true 时只更新值不触发渲染（外部主动重绘）
+  function apply(hex2, silent) {
+    color=hex2; hsl=hexToHSL(hex2);
+    updateUI();
+    if(!silent) onChange();
+  }
+  // 直接按 HSL 更新：不经 hex 往返转换，避免 h≈1(360°红) 被反解析归零导致游标弹回左端
+  function applyHSL(patch) {
+    hsl=Object.assign({},hsl,patch);
+    color=hslToHex(hsl.h,hsl.s,hsl.l);
+    updateUI(); onChange();
+  }
+  swatch.addEventListener('click',()=>palette.classList.toggle('show'));
+  palBtn.addEventListener('click',()=>palette.classList.toggle('show'));
+  hexEl.addEventListener('change',()=>{
+    let v=hexEl.value.trim(); if(!v.startsWith('#'))v='#'+v;
+    if(/^#[0-9a-fA-F]{6}$/.test(v)) apply(v); else hexEl.value=color.toUpperCase();
+  });
+  root.querySelectorAll('.preset-colors button').forEach(b=>b.addEventListener('click',()=>apply(b.dataset.c)));
+
+  function svAt(e){const r=svEl.getBoundingClientRect();
+    const s=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    const l=Math.max(0,Math.min(1,1-(e.clientY-r.top)/r.height));
+    applyHSL({s,l});}
+  function hueAt(e){const r=hueEl.getBoundingClientRect();
+    const h=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    applyHSL({h});}
+  svEl.addEventListener('mousedown',e=>{e.preventDefault();dragging='sv';svAt(e);});
+  hueEl.addEventListener('mousedown',e=>{e.preventDefault();dragging='hue';hueAt(e);});
+  window.addEventListener('mousemove',e=>{if(dragging==='sv')svAt(e);else if(dragging==='hue')hueAt(e);});
+  window.addEventListener('mouseup',()=>{dragging=null;});
+
+  eyeBtn.addEventListener('click',async()=>{
+    if(!('EyeDropper' in window)){setStatus('当前浏览器不支持全屏取色，请使用 Chrome 或 Edge','err');return;}
+    try{
+      const res=await new EyeDropper().open();
+      let hex3=res.sRGBHex||'#FFFFFF'; if(!hex3.startsWith('#'))hex3='#'+hex3;
+      apply(hex3); setStatus('取色成功：'+hex3.toUpperCase(),'ok');
+    }catch(e){
+      if(e&&e.name==='AbortError')return; // ESC 取消，不打扰
+      setStatus('取色失败：'+((e&&e.name)||e),'err');
+    }
+  });
+
+  updateUI();
+  return { get:()=>color, set:h=>apply(h,true) };
+}
+const lineCtl=createColorControl('lineColorCtl','#FFFFFF',()=>{updateBrushPreview();composite();});
+const fillCtl=createColorControl('fillColorCtl','#f3d9b8',()=>{composite();});
+
+// ============ 输出模式切换 ============
+function setMode(m) {
+  mode=m;
+  modeSwitch.querySelectorAll('.mode-btn').forEach(b=>b.classList.toggle('active',b.dataset.mode===m));
+  fillColorGroup.style.display=(m==='fill')?'':'none';
+  resultTitle.textContent=(m==='fill')?'填色结果（透明底）':'线稿（透明底）';
+  composite();
+  if(m==='fill'&&!personMask&&img&&sketchHW){
+    runPersonSeg().then(()=>composite()).catch(e=>setStatus((e&&e.message)||String(e),'err'));
+  }
+}
+modeSwitch.addEventListener('click',e=>{
+  const b=e.target.closest('.mode-btn');
+  if(b)setMode(b.dataset.mode);
 });
 
 // ============ 粗细无极 + 笔头预览 ============
@@ -662,7 +722,7 @@ function updateBrushPreview() {
   const outPx = measuredStrokePx || (3 + 2 * thickR);
   const d = Math.max(1, outPx * getPreviewScale());
   brushSample.style.height = d.toFixed(2) + 'px';
-  brushSample.style.background = currentColor;
+  brushSample.style.background = lineCtl.get();
   brushSample.title = '当前线宽约 ' + outPx.toFixed(1) + ' px（输出图实际像素）';
 }
 window.addEventListener('resize', updateBrushPreview);
@@ -756,8 +816,13 @@ async function generate() {
     rawSketch=new Float32Array(arr.length);
     for(let i=0;i<arr.length;i++)rawSketch[i]=Math.max(0,Math.min(1,arr[i]));
     sketchHW={H:dims[2],W:dims[3]};
+    personMask=null; // 新图作废旧人物 mask
 
     renderLineart();
+    if(mode==='fill'){
+      try{await runPersonSeg();composite();}
+      catch(e2){setStatus((e2&&e2.message)||String(e2),'err');}
+    }
     setStatus('完成！可以下载或继续调整颜色、粗细','ok');
     recolorBtn.disabled=false;dlBtn.disabled=false;
   }catch(e){
@@ -772,21 +837,40 @@ function dilate(src,W,H,r) {
   const tmp=new Uint8ClampedArray(src.length);
   for(let y=0;y<H;y++){
     const base=y*W,dq=[];
+    // 初始窗口 [0, r]：起始元素必须先注入，否则边缘自身像素永不入队
+    for(let k=0;k<=r&&k<W;k++){
+      const v=src[base+k];
+      while(dq.length&&src[base+dq[dq.length-1]]<=v)dq.pop();
+      dq.push(k);
+    }
     for(let x=0;x<W;x++){
-      const ax=x+r;
-      if(ax<W){const v=src[base+ax];while(dq.length&&src[base+dq[dq.length-1]]<=v)dq.pop();dq.push(ax);}
       while(dq[0]<x-r)dq.shift();
       tmp[base+x]=src[base+dq[0]];
+      const nk=x+1+r; // 为下一位置注入新元素
+      if(nk<W){
+        const v=src[base+nk];
+        while(dq.length&&src[base+dq[dq.length-1]]<=v)dq.pop();
+        dq.push(nk);
+      }
     }
   }
   const out=new Uint8ClampedArray(src.length);
   for(let x=0;x<W;x++){
     const dq=[];
+    for(let k=0;k<=r&&k<H;k++){
+      const v=tmp[k*W+x];
+      while(dq.length&&tmp[dq[dq.length-1]*W+x]<=v)dq.pop();
+      dq.push(k);
+    }
     for(let y=0;y<H;y++){
-      const ay=y+r;
-      if(ay<H){const v=tmp[ay*W+x];while(dq.length&&tmp[dq[dq.length-1]*W+x]<=v)dq.pop();dq.push(ay);}
       while(dq[0]<y-r)dq.shift();
       out[y*W+x]=tmp[dq[0]*W+x];
+      const nk=y+1+r;
+      if(nk<H){
+        const v=tmp[nk*W+x];
+        while(dq.length&&tmp[dq[dq.length-1]*W+x]<=v)dq.pop();
+        dq.push(nk);
+      }
     }
   }
   return out;
@@ -802,12 +886,71 @@ function dilateSmooth(src,W,H,r) {
   return out;
 }
 
-// ============ 渲染线稿 ============
+// ============ 人物识别（ISNet 动漫专用，看原图直接出人物 alpha） ============
+// skytnt/anime-seg 的 ONNX 量化版，针对二次元/插画风；整张人物（含头发、四肢）作为一块
+let personMask=null; // Uint8ClampedArray，输出尺寸 W×H，0-255
+let segSessionPromise=null;
+function getSegSession() {
+  if(!segSessionPromise){
+    segSessionPromise=(async()=>{
+      const ort=await loadOrt();
+      setStatus('首次使用需下载人物识别模型（约 42MB，只用一次）…','busy');
+      return ort.InferenceSession.create('models/anime_seg_q.onnx',
+        {executionProviders:['wasm'],graphOptimizationLevel:'all'});
+    })();
+  }
+  return segSessionPromise;
+}
+async function runPersonSeg() {
+  if(!img||!sketchHW)return;
+  const{W,H}=sketchHW;
+  const sess=await getSegSession();
+  const S=1024;
+  // letterbox：长边缩到 1024，短边灰底(128)补齐，保持宽高比不变形
+  const scale=S/Math.max(W,H);
+  const pw=Math.max(1,Math.round(W*scale)), ph=Math.max(1,Math.round(H*scale));
+  const ox=Math.round((S-pw)/2), oy=Math.round((S-ph)/2);
+  const tc=document.createElement('canvas');tc.width=S;tc.height=S;
+  const tg=tc.getContext('2d');
+  tg.fillStyle='rgb(128,128,128)';tg.fillRect(0,0,S,S);
+  tg.imageSmoothingQuality='high';tg.drawImage(img,ox,oy,pw,ph);
+  const td=tg.getImageData(0,0,S,S).data;
+  const t=new Float32Array(3*S*S);
+  for(let p=0;p<S*S;p++){
+    t[p]=td[4*p]/255-0.5;
+    t[S*S+p]=td[4*p+1]/255-0.5;
+    t[2*S*S+p]=td[4*p+2]/255-0.5;
+  }
+  setStatus('AI 正在识别人物主体…','busy');
+  await new Promise(r=>setTimeout(r,30));
+  const inName=sess.inputNames[0], outName=sess.outputNames[0];
+  const o=await sess.run({[inName]:new window.ort.Tensor('float32',t,[1,3,S,S])});
+  const m=o[outName].data;
+  // 取出图像区域的 mask（白底=人物），平滑缩回输出尺寸
+  const mc=document.createElement('canvas');mc.width=pw;mc.height=ph;
+  const mg=mc.getContext('2d'),mi=mg.createImageData(pw,ph),md=mi.data;
+  for(let y=0;y<ph;y++){
+    for(let x=0;x<pw;x++){
+      let v=m[(y+oy)*S+(x+ox)]; v=v<0?0:v>1?1:v;
+      const j=4*(y*pw+x);
+      md[j]=md[j+1]=md[j+2]=255;md[j+3]=Math.round(v*255);
+    }
+  }
+  mg.putImageData(mi,0,0);
+  const oc=document.createElement('canvas');oc.width=W;oc.height=H;
+  const og=oc.getContext('2d');og.imageSmoothingQuality='high';
+  og.drawImage(mc,0,0,W,H);
+  const od2=og.getImageData(0,0,W,H).data;
+  personMask=new Uint8ClampedArray(W*H);
+  for(let p=0;p<W*H;p++)personMask[p]=od2[4*p+3];
+  setStatus('人物识别完成','ok');
+}
+
+// ============ 渲染：base（随细节变化）→ 膨胀线宽 → 合成 ============
+let lastBase=null, lastLineAlpha=null;
 function renderLineart() {
   if(!rawSketch||!sketchHW)return;
   const{H,W}=sketchHW;
-  const hex=currentColor.replace('#','');
-  const R=parseInt(hex.slice(0,2),16),G=parseInt(hex.slice(2,4),16),B=parseInt(hex.slice(4,6),16);
   const t=(100-parseInt(detail.value))/100*0.3;
 
   const base=new Uint8ClampedArray(rawSketch.length);
@@ -815,20 +958,51 @@ function renderLineart() {
     const v=Math.max(0,(1-rawSketch[i])-t)/(1-t);
     base[i]=Math.max(0,Math.min(255,Math.round(v*255)));
   }
+  lastBase=base;
+
   const alpha=dilateSmooth(base,W,H,thickR);
+  lastLineAlpha=alpha;
   measuredStrokePx = measureStrokePx(alpha, W, H);
 
   outCanvas.width=W;outCanvas.height=H;
-  const g=outCanvas.getContext('2d');
-  const od=g.createImageData(W,H),dd=od.data;
-  for(let p=0,i=0;p<alpha.length;p++,i+=4){
-    dd[i]=R;dd[i+1]=G;dd[i+2]=B;dd[i+3]=alpha[p];
-  }
-  g.putImageData(od,0,0);
   outSizeTag.textContent=W+'×'+H;
   updateBrushPreview();
+  composite();
+}
+
+// ============ 统一合成：填充层在下，线条 over ============
+function parseHexRgb(hex){
+  const h=hex.replace('#','');
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];
+}
+function composite() {
+  if(!rawSketch||!sketchHW||!lastLineAlpha)return;
+  const{W,H}=sketchHW;
+  const line=parseHexRgb(lineCtl.get()), fill=parseHexRgb(fillCtl.get());
+  const g=outCanvas.getContext('2d');
+  const od=g.createImageData(W,H),dd=od.data;
+  const mask=personMask;
+  for(let p=0,i=0;p<W*H;p++,i+=4){
+    const aL=lastLineAlpha[p]/255;
+    let aF=0;
+    if(mode==='fill'&&mask)aF=mask[p]/255;
+    const oa=aL+aF*(1-aL);
+    if(oa>0.002){
+      dd[i]  =Math.round((line[0]*aL+fill[0]*aF*(1-aL))/oa);
+      dd[i+1]=Math.round((line[1]*aL+fill[1]*aF*(1-aL))/oa);
+      dd[i+2]=Math.round((line[2]*aL+fill[2]*aF*(1-aL))/oa);
+      dd[i+3]=Math.round(oa*255);
+    }
+  }
+  g.putImageData(od,0,0);
   renderOverlay();
 }
+
+resetRegionsBtn.addEventListener('click',async()=>{
+  if(!img||!sketchHW)return;
+  try{await runPersonSeg();composite();}
+  catch(e){setStatus((e&&e.message)||String(e),'err');}
+});
 
 // ============ 叠加效果：原图(可调透明度) + 线稿 ============
 function renderOverlay() {
@@ -844,7 +1018,6 @@ function renderOverlay() {
   g.drawImage(outCanvas,0,0);
 }
 
-updateColorUI();
 updateBrushPreview();
 </script>
 
